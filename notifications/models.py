@@ -18,38 +18,38 @@ except ImportError:
     now = datetime.datetime.now
 
 class NotificationQuerySet(models.query.QuerySet):
-    
+
     def unread(self):
         "Return only unread items in the current queryset"
         return self.filter(unread=True)
-    
+
     def read(self):
         "Return only read items in the current queryset"
         return self.filter(unread=False)
-    
+
     def mark_all_as_read(self, recipient=None):
         """Mark as read any unread messages in the current queryset.
-        
+
         Optionally, filter these by recipient first.
         """
-        # We want to filter out read ones, as later we will store 
+        # We want to filter out read ones, as later we will store
         # the time they were marked as read.
         qs = self.unread()
         if recipient:
             qs = qs.filter(recipient=recipient)
-        
+
         qs.update(unread=False)
-    
+
     def mark_all_as_unread(self, recipient=None):
         """Mark as unread any read messages in the current queryset.
-        
+
         Optionally, filter these by recipient first.
         """
         qs = self.read()
-        
+
         if recipient:
             qs = qs.filter(recipient=recipient)
-            
+
         qs.update(unread=True)
 
 class Notification(models.Model):
@@ -83,12 +83,12 @@ class Notification(models.Model):
     """
     LEVELS = Choices('success', 'info', 'warning', 'error')
     level = models.CharField(choices=LEVELS, default='info', max_length=20)
-    
+
     recipient = models.ForeignKey(User, blank=False, related_name='notifications')
     unread = models.BooleanField(default=True, blank=False)
 
-    actor_content_type = models.ForeignKey(ContentType, related_name='notify_actor')
-    actor_object_id = models.CharField(max_length=255)
+    actor_content_type = models.ForeignKey(ContentType, related_name='notify_actor', null=True, blank=True)
+    actor_object_id = models.CharField(max_length=255, null=True, blank=True)
     actor = generic.GenericForeignKey('actor_content_type', 'actor_object_id')
 
     verb = models.CharField(max_length=255)
@@ -110,7 +110,7 @@ class Notification(models.Model):
     timestamp = models.DateTimeField(default=now)
 
     public = models.BooleanField(default=True)
-    
+
     objects = managers.PassThroughManager.for_queryset_class(NotificationQuerySet)()
 
     class Meta:
@@ -118,7 +118,7 @@ class Notification(models.Model):
 
     def __unicode__(self):
         ctx = {
-            'actor': self.actor,
+            'actor': self.actor or "Someone",
             'verb': self.verb,
             'action_object': self.action_object,
             'target': self.target,
@@ -155,7 +155,7 @@ if getattr(settings, 'NOTIFY_USE_JSONFIELD', False):
         from jsonfield.fields import JSONField
     except ImportError:
         raise ImproperlyConfigured("You must have a suitable JSONField installed")
-    
+
     JSONField(blank=True, null=True).contribute_to_class(Notification, 'data')
     EXTRA_DATA = True
 
@@ -168,10 +168,14 @@ def notify_handler(verb, **kwargs):
     kwargs.pop('signal', None)
     recipient = kwargs.pop('recipient')
     actor = kwargs.pop('sender')
+    actor_pk = None
+    if actor is not None:
+        actor_pk = actor.pk
+        actor = ContentType.objects.get_for_model(actor)
     newnotify = Notification(
         recipient = recipient,
-        actor_content_type=ContentType.objects.get_for_model(actor),
-        actor_object_id=actor.pk,
+        actor_content_type=actor,
+        actor_object_id=actor_pk,
         verb=unicode(verb),
         public=bool(kwargs.pop('public', True)),
         description=kwargs.pop('description', None),
@@ -184,7 +188,7 @@ def notify_handler(verb, **kwargs):
             setattr(newnotify, '%s_object_id' % opt, obj.pk)
             setattr(newnotify, '%s_content_type' % opt,
                     ContentType.objects.get_for_model(obj))
-    
+
     if len(kwargs) and EXTRA_DATA:
         newnotify.data = kwargs
 
